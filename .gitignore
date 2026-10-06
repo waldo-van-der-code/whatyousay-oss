@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+whatyousay.db
+*.db
+whatyousay.db-shm
+whatyousay.db-wal
+*.log
+.DS_Store
+test-results/
+evals/storageState.json
+evals/playwright-report/
+evals/fixtures/
+evals/scores.jsonl
+evals/scores-vs-chatgpt.jsonl
+WhatsApp Audio*
+*.opus
+

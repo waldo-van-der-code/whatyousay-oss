@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatYouSay</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✍️</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/libphonenumber-js/bundle/libphonenumber-min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- Nav -->
+    <nav class="nav">
+      <div class="nav-logo">📱 WhatYouSay</div>
+      <div class="nav-right">
+        <span class="nav-email" id="nav-email"></span>
+        <div class="avatar-wrap" id="nav-avatar" title="Account">
+          <img id="avatar-img" style="display:none;width:32px;height:32px;border-radius:50%;object-fit:cover" alt="Profile" onerror="this.style.display='none';document.getElementById('avatar-initials').style.display='flex'">
+          <div id="avatar-initials" class="avatar-initials"></div>
+        </div>
+        <form action="/auth/logout" method="POST">
+          <button type="submit" class="btn btn-ghost btn-sm">Logout</button>
+        </form>
+      </div>
+    </nav>
+
+    <!-- WhatsApp connection card -->
+    <div class="card wa-card">
+      <div class="card-title">WhatsApp</div>
+
+      <!-- QR state -->
+      <div id="wa-qr-section" class="wa-card-qr">
+        <!-- Which WhatYouSay account the scan links to (ME-065: login CSRF could
+             otherwise put a victim in someone else's account without them noticing). -->
+        <p class="wa-account-line" style="margin:0 0 12px;font-size:13px;color:var(--text-muted)">
+          Linking WhatsApp to the WhatYouSay account <strong id="wa-account-email" style="color:var(--text)"></strong>
+        </p>
+        <div class="wa-qr-wrap">
+          <div class="wa-qr-img" id="wa-qr-container">
+            <div class="wa-qr-spinner" id="wa-spinner">
+              <div class="spinner"></div>
+              <span>Generating QR…</span>
+            </div>
+            <div class="wa-qr-spinner" id="wa-connect-error" style="display:none">
+              <span id="wa-connect-error-msg">⚠️ Could not connect to WhatsApp.</span>
+              <button class="btn btn-sm" onclick="retryWA()" style="margin-top:8px">Try again</button>
+            </div>
+            <img id="wa-qr-img" style="display:none" alt="Scan this QR code with WhatsApp">
+          </div>
+          <div class="wa-instructions">
+            <div id="wa-qr-instructions">
+              <strong>Scan to connect</strong>
+              <ol>
+                <li>Open WhatsApp on your phone</li>
+                <li>Tap Menu → Linked devices</li>
+                <li>Tap "Link a device"</li>
+                <li>Scan the QR code above</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connected state -->
+      <div id="wa-connected-section" style="display:none">
+        <div class="wa-connected-box">
+          <div class="wa-connected-icon-wrap">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="wa-connected-title">WhatsApp connected</span>
+              <span class="wa-connected-phone" id="wa-phone"></span>
+            </div>
+            <p class="wa-connected-sub">Your voice messages are being transcribed automatically.</p>
+          </div>
+        </div>
+
+        <!-- Cross-device login -->
+        <div class="wa-crossdevice">
+          <span class="wa-crossdevice-label">Login on a different device</span>
+          <button class="btn btn-ghost btn-sm" id="copy-link-btn" onclick="copyAuthLink()">Get link</button>
+        </div>
+
+        <!-- Settings -->
+        <div class="settings-accordion" data-testid="settings-accordion" onclick="toggleSettings()" style="margin-top:16px">
+          <div class="settings-accordion-header">
+            <div style="font-size:13px;font-weight:500;color:var(--text-muted)">Settings</div>
+            <div class="settings-accordion-chevron open" id="settings-chevron">▼</div>
+          </div>
+        </div>
+        <div class="settings-body open" id="settings-body">
+
+          <!-- 1:1 Chats -->
+          <div class="s-section-title">1:1 Chats</div>
+          <div class="s-row">
+            <label class="toggle"><input type="checkbox" id="s-1on1-sent" onchange="saveSetting('transcribe_1on1_sent', this.checked)"><div class="toggle-track"></div></label>
+            <span class="s-row-label">Transcribe voice messages I send</span>
+          </div>
+          <div class="s-row">
+            <label class="toggle"><input type="checkbox" id="s-1on1-recv" onchange="saveSetting('transcribe_1on1_received', this.checked)"><div class="toggle-track"></div></label>
+            <span class="s-row-label">Transcribe voice messages I receive</span>
+          </div>
+
+          <div class="s-indent" style="margin-top:8px">
+            <label class="form-label">Except these people:</label>
+            <input class="form-input" type="text" id="s-exclude-contacts-input"
+              placeholder="Type name or number, then press Enter or comma"
+              style="font-size:13px"
+              onkeydown="chipKeydown(event,'exclude_contacts')"
+              onblur="chipBlur(event,'exclude_contacts')"
+              onpaste="chipPaste(event,'exclude_contacts')">
+            <div class="chip-list" id="s-exclude-contacts-chips"></div>
+            <span style="font-size:12px;color:var(--text-dim);margin-top:6px;display:block">Partial name or number match · applies to both sent &amp; received</span>
+          </div>
+
+          <!-- Groups -->
+          <div class="s-section-title">Groups</div>
+          <div class="s-row">
+            <label class="toggle"><input type="checkbox" id="s-grp-sent" onchange="saveSetting('transcribe_group_sent', this.checked)"><div class="toggle-track"></div></label>
+            <span class="s-row-label">Transcribe voice messages I send</span>
+          </div>
+          <div class="s-row">
+            <label class="toggle"><input type="checkbox" id="s-grp-recv" onchange="saveSetting('transcribe_group_received', this.checked)"><div class="toggle-track"></div></label>
+            <span class="s-row-label">Transcribe voice messages I receive</span>
+          </div>
+
+          <div class="s-indent" style="margin-top:8px">
+            <label class="form-label">Except these groups:</label>
+            <input class="form-input" type="text" id="s-exclude-groups-input"
+              placeholder="Type group name, then press Enter or comma"
+              style="font-size:13px"
+              onkeydown="chipKeydown(event,'exclude_groups')"
+              onblur="chipBlur(event,'exclude_groups')"
+              onpaste="chipPaste(event,'exclude_groups')">
+            <div class="chip-list" id="s-exclude-groups-chips"></div>
+            <span style="font-size:12px;color:var(--text-dim);margin-top:6px;display:block">Partial match on group name</span>
+          </div>
+
+          <!-- Translation -->
+          <div class="s-section-title">Translation</div>
+          <div class="s-row">
+            <label class="toggle"><input type="checkbox" id="s-translate" onchange="saveSetting('translate_to_english', this.checked)"><div class="toggle-track"></div></label>
+            <span class="s-row-label" id="s-translate-label">Translate messages I receive into:</span>
+          </div>
+          <div class="s-indent" style="margin-top:8px">
+            <label class="form-label">Target language</label>
+            <select class="form-input" id="s-lang-select" onchange="onLangChange(this.value)"
+              style="appearance:auto;cursor:pointer"></select>
+            <span id="s-lang-auto-note" style="font-size:13px;color:var(--text-dim);margin-top:4px">
+              Auto-detected from your browser · Change above to override
+            </span>
+          </div>
+
+          <!-- AI Summary -->
+          <div class="s-section-title">AI Summary</div>
+          <div class="s-row">
+            <label class="toggle"><input type="checkbox" id="s-summary" onchange="saveSetting('summary_enabled', this.checked)"><div class="toggle-track"></div></label>
+            <span class="s-row-label">Generate summary for long messages</span>
+          </div>
+          <div class="s-indent">
+            <label class="form-label">Minimum words</label>
+            <input class="form-input s-num-input" type="number" id="s-min-words" min="10" max="1000"
+              onchange="const n = parseInt(this.value, 10); if (Number.isInteger(n)) saveSetting('summary_min_words', n)">
+            <label class="form-label" style="margin-top:12px">Custom prompt (optional)</label>
+            <textarea class="form-input" id="s-custom-prompt" rows="3" maxlength="2000"
+              placeholder="Leave empty for default..."
+              onchange="saveSetting('summary_custom_prompt', this.value)"
+              style="resize:vertical"></textarea>
+          </div>
+
+          <!-- Transcription context -->
+          <div class="s-section-title">Transcription context</div>
+          <div class="s-indent">
+            <input class="form-input" type="text" id="s-whisper-context" maxlength="200"
+              placeholder="e.g. anna, bram, carla, fiona, acme"
+              oninput="saveSetting('whisper_context', this.value.replace(/[\r\n\t]+/g,' ').slice(0,200)); document.getElementById('s-whisper-ctx-count').textContent = this.value.slice(0,200).length + ' / 200'">
+            <span style="font-size:12px;color:var(--text-dim);display:block;margin-top:6px">Names and domain terms to spell correctly, e.g. people, places, products. Applied only when it does not cost transcript completeness. Max 200 characters.</span>
+            <span id="s-whisper-ctx-count" style="font-size:12px;color:#888;display:block;margin-top:2px">0 / 200</span>
+          </div>
+          <div style="margin-top:14px">
+          </div>
+
+          <div style="margin-top:14px">
+            <span id="settings-saved-msg" style="font-size:12px;color:var(--accent);display:none">Saved ✓</span>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;text-align:right">
+          <button class="btn btn-danger btn-sm" onclick="disconnectWA()">Disconnect</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Telegram add-on -->
+    <div id="tg-section" class="card" style="display:none">
+        <div class="settings-accordion" data-testid="tg-accordion" onclick="toggleTgSection()">
+          <div class="settings-accordion-header">
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.38l-2.95-.924c-.64-.203-.653-.64.136-.954l11.57-4.461c.537-.194 1.006.131.968.18z" fill="#2AABEE"/></svg>
+              <span class="card-title" style="margin:0">Also use WhatYouSay in Telegram</span>
+            </div>
+            <div class="settings-accordion-chevron open" id="tg-chevron">▼</div>
+          </div>
+        </div>
+
+        <div id="tg-body" style="margin-top:16px">
+          <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px">
+            Forward voice notes to the bot in a DM, or add it to a group to auto-transcribe. Both use your current settings.
+          </p>
+
+          <!-- Setup instructions -->
+          <div style="background:rgba(36,161,222,0.10);border:1px solid rgba(36,161,222,0.20);border-radius:8px;padding:12px;font-size:13px;margin-bottom:12px;color:var(--text-muted)">
+            <div style="margin-bottom:10px;font-size:13px;font-weight:600;color:rgba(255,255,255,0.75)">Option A — Forward directly to the bot (easiest)</div>
+            <ol style="margin:0 0 12px;padding-left:18px;line-height:1.8">
+              <li>Open a DM with <strong class="tg-bot-name" style="color:rgba(255,255,255,0.65);font-weight:500">your Telegram bot</strong> on Telegram</li>
+              <li>Send: <span id="tg-link-command" style="font-family:monospace;background:rgba(0,0,0,0.25);padding:2px 6px;border-radius:4px">/link …</span>
+                <button onclick="copyTgCommand()" style="background:none;border:none;cursor:pointer;color:var(--accent);font-size:12px;margin-left:6px">copy</button>
+              </li>
+              <li>Forward any voice note to the bot — it replies with the transcript</li>
+            </ol>
+            <div style="margin-bottom:6px;font-size:13px;font-weight:600;color:rgba(255,255,255,0.75)">Option B — Auto-transcribe a group</div>
+            <ol style="margin:0;padding-left:18px;line-height:1.8">
+              <li>Add <strong class="tg-bot-name" style="color:rgba(255,255,255,0.65);font-weight:500">your Telegram bot</strong> to a group</li>
+              <li><strong style="color:rgba(255,255,255,0.65);font-weight:500">Make it an admin</strong> — tap its name → Make Admin (keep only Read Messages)</li>
+              <li>In that group, send the <code>/link</code> command shown above — tap <em>copy</em> first, because each code works only once and a fresh one appears here after you use it</li>
+              <li>Done — voice notes are transcribed automatically</li>
+            </ol>
+          </div>
+
+          <!-- Telegram-specific transcription toggles -->
+          <div class="s-section-title">Transcription scope</div>
+          <div class="s-row">
+            <label class="toggle"><input type="checkbox" id="tg-sent" onchange="saveTgSetting('telegram_transcribe_sent', this.checked)"><div class="toggle-track"></div></label>
+            <span class="s-row-label">Transcribe voice messages I send</span>
+          </div>
+          <div class="s-row" style="margin-bottom:12px">
+            <label class="toggle"><input type="checkbox" id="tg-received" onchange="saveTgSetting('telegram_transcribe_received', this.checked)"><div class="toggle-track"></div></label>
+            <span class="s-row-label">Transcribe voice messages I receive</span>
+          </div>
+
+          <!-- Linked groups -->
+          <div id="tg-groups-list"></div>
+        </div>
+    </div>
+
+    <!-- Transcriptions -->
+    <div class="card">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Recent transcriptions</span>
+        <div style="display:flex;gap:6px">
+          <span class="badge" id="txn-count">0</span>
+          <span class="badge" id="txn-duration" style="display:none"></span>
+        </div>
+      </div>
+      <div id="txn-list" class="txn-list">
+        <div class="txn-empty">No transcriptions yet. Connect WhatsApp and receive a voice message.</div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer style="text-align:center;padding:24px 0 32px;color:var(--text-dim);font-size:13px">
+      &copy; 2026 WhatYouSay
+    </footer>
+  </div>
+
+  <script>
+    // ── Language maps ─────────────────────────────────────────────────────────
+    const LANG_OPTIONS = [
+      ['am', 'Amharic'], ['ar', 'Arabic'], ['bn', 'Bengali'], ['zh', 'Chinese'],
+      ['cs', 'Czech'], ['da', 'Danish'], ['nl', 'Dutch'], ['en', 'English'],
+      ['fi', 'Finnish'], ['fr', 'French'], ['de', 'German'], ['el', 'Greek'],
+      ['gu', 'Gujarati'], ['ha', 'Hausa'], ['he', 'Hebrew'], ['hi', 'Hindi'],
+      ['hu', 'Hungarian'], ['id', 'Indonesian'], ['it', 'Italian'], ['ja', 'Japanese'],
+      ['ko', 'Korean'], ['ms', 'Malay'], ['mr', 'Marathi'], ['no', 'Norwegian'],
+      ['fa', 'Persian'], ['pl', 'Polish'], ['pt', 'Portuguese'], ['pa', 'Punjabi'],
+      ['ro', 'Romanian'], ['ru', 'Russian'], ['es', 'Spanish'], ['sw', 'Swahili'],
+      ['sv', 'Swedish'], ['ta', 'Tamil'], ['te', 'Telugu'], ['th', 'Thai'],
+      ['tr', 'Turkish'], ['uk', 'Ukrainian'], ['ur', 'Urdu'], ['uz', 'Uzbek'],
+      ['vi', 'Vietnamese'], ['yo', 'Yoruba'],
+    ];
+    const LANG_NAMES = Object.fromEntries(LANG_OPTIONS);
+
+    function phoneInfo(jid) {
+      const raw = jid.split('@')[0].split(':')[0];
+      if (!raw) return { flag: '', local: raw };
+      try {
+        const parsed = libphonenumber.parsePhoneNumber('+' + raw);
+        if (!parsed.isValid()) return { flag: '', local: raw };
+        const cc = parsed.country ?? '';
+        const flag = cc ? [...cc].map(c => String.fromCodePoint(c.charCodeAt(0) - 65 + 0x1F1E6)).join('') : '';
+        return { flag, local: parsed.formatNational() };
+      } catch {
+        return { flag: '', local: raw };
+      }
+    }
+
+    function setTranslateLabel(langCode) {
+      // label is static — dropdown shows the language
+    }
+
+    function buildLangSelect() {
+      const sel = document.getElementById('s-lang-select');
+      sel.innerHTML = LANG_OPTIONS.map(([code, name]) =>
+        `<option value="${code}">${name}</option>`
+      ).join('');
+    }
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    let sse = null;
+    let saveTimeout = null;
+    let _avatarUrl = null;
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    async function init() {
+      try {
+        await Promise.all([loadMe(), loadTranscriptions(), loadSettings()]);
+      } catch { /* ignore individual load failures — WA status check must still run */ }
+      await checkInitialStatus();
+      connectSSE();
+      startStatusPoll();
+    }
+
+    // ── User / avatar ─────────────────────────────────────────────────────────
+    async function loadMe() {
+      const res = await fetch('/api/me');
+      const { email } = await res.json();
+      document.getElementById('nav-email').textContent = email;
+      document.getElementById('wa-account-email').textContent = email;
+      // Set initials fallback
+      const initial = (email[0] ?? '?').toUpperCase();
+      document.getElementById('avatar-initials').textContent = initial;
+    }
+
+    function setAvatar(url) {
+      if (!url) return;
+      _avatarUrl = url;
+      const img = document.getElementById('avatar-img');
+      img.src = url;
+      img.style.display = 'block';
+      document.getElementById('avatar-initials').style.display = 'none';
+    }
+
+    // ── Check initial WA status ───────────────────────────────────────────────
+    async function checkInitialStatus() {
+      try {
+        const res = await fetch('/api/whatsapp/status?_t=' + Date.now(), { cache: 'no-store' });
+        const status = await res.json();
+        if (status.connected) {
+          showConnected(status.phone, status.language, status.avatarUrl);
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Polling fallback: if SSE hasn't shown connected within 8s, keep polling
+    let _pollTimer = null;
+    function startStatusPoll() {
+      if (_pollTimer) return;
+      _pollTimer = setInterval(async () => {
+        try {
+          const res = await fetch('/api/whatsapp/status?_t=' + Date.now(), { cache: 'no-store' });
+          const status = await res.json();
+          if (status.connected) {
+            clearInterval(_pollTimer);
+            _pollTimer = null;
+            showConnected(status.phone, status.language, status.avatarUrl);
+          }
+        } catch { /* ignore */ }
+      }, 5000);
+    }
+
+    function stopStatusPoll() {
+      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+    }
+
+    // ── SSE / WhatsApp ────────────────────────────────────────────────────────
+    function connectSSE() {
+      if (sse) sse.close();
+      sse = new EventSource('/api/whatsapp/qr');
+
+      sse.addEventListener('qr', e => {
+        const { dataUrl } = JSON.parse(e.data);
+        showQR(dataUrl);
+      });
+
+      sse.addEventListener('connected', e => {
+        const { phone, language, avatarUrl } = JSON.parse(e.data);
+        showConnected(phone, language, avatarUrl);
+      });
+
+      sse.addEventListener('disconnected', () => {
+        showQRSpinner();
+      });
+
+      sse.addEventListener('connect_failed', e => {
+        let message = '';
+        try { message = JSON.parse(e.data)?.message ?? ''; } catch { /* ignore */ }
+        showConnectError(message);
+      });
+
+      sse.addEventListener('transcription', e => {
+        const data = JSON.parse(e.data);
+        // Prepend real-time item with text (in-memory only), then reload to show "Content deleted"
+        prependTranscription(data);
+        setTimeout(loadTranscriptions, 3000);
+      });
+
+      sse.onerror = () => {
+        setTimeout(connectSSE, 5000);
+      };
+    }
+
+    function showQR(dataUrl) {
+      document.getElementById('wa-spinner').style.display = 'none';
+      document.getElementById('wa-connect-error').style.display = 'none';
+      const img = document.getElementById('wa-qr-img');
+      img.src = dataUrl;
+      img.style.display = 'block';
+      document.getElementById('wa-qr-section').style.display = 'block';
+      document.getElementById('wa-connected-section').style.display = 'none';
+    }
+
+    function showQRSpinner() {
+      document.getElementById('wa-qr-img').style.display = 'none';
+      document.getElementById('wa-connect-error').style.display = 'none';
+      document.getElementById('wa-spinner').style.display = 'flex';
+      document.getElementById('wa-qr-section').style.display = 'block';
+      document.getElementById('wa-connected-section').style.display = 'none';
+    }
+
+    function showConnectError(message) {
+      document.getElementById('wa-spinner').style.display = 'none';
+      document.getElementById('wa-qr-img').style.display = 'none';
+      document.getElementById('wa-connect-error-msg').textContent = '⚠️ ' + (message || 'Could not connect to WhatsApp.');
+      document.getElementById('wa-connect-error').style.display = 'flex';
+      document.getElementById('wa-qr-section').style.display = 'block';
+      document.getElementById('wa-connected-section').style.display = 'none';
+    }
+
+    function retryWA() {
+      showQRSpinner();
+      connectSSE();
+    }
+
+    function showConnected(phone, language, avatarUrl) {
+      stopStatusPoll();
+      document.getElementById('wa-qr-section').style.display = 'none';
+      document.getElementById('wa-connected-section').style.display = 'block';
+      // Format phone with flag
+      if (phone) {
+        const jid = phone.replace('+', '') + '@s.whatsapp.net';
+        const { flag, local } = phoneInfo(jid);
+        document.getElementById('wa-phone').textContent = `(${flag} ${local})`;
+      }
+      if (language) setTranslateLabel(language);
+      if (avatarUrl) setAvatar(avatarUrl);
+    }
+
+    async function disconnectWA() {
+      if (!confirm('Disconnect WhatsApp? You will need to scan the QR code again.')) return;
+      await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+      showQRSpinner();
+      if (sse) sse.close();
+      connectSSE();
+    }
+
+    // ── Cross-device auth link ────────────────────────────────────────────────
+    async function copyAuthLink() {
+      const btn = document.getElementById('copy-link-btn');
+      btn.disabled = true;
+      btn.textContent = 'Loading…';
+      try {
+        const res = await fetch('/auth/link', { method: 'POST' });
+        const { url } = await res.json();
+        await navigator.clipboard.writeText(url);
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Get link'; btn.disabled = false; }, 2000);
+      } catch {
+        btn.textContent = 'Failed';
+        setTimeout(() => { btn.textContent = 'Get link'; btn.disabled = false; }, 2000);
+      }
+    }
+
+    // ── Transcriptions ────────────────────────────────────────────────────────
+    async function loadTranscriptions() {
+      const res = await fetch('/api/transcriptions');
+      const rows = await res.json();
+      renderTranscriptions(rows);
+    }
+
+    function prependTranscription(data) {
+      // Show a real-time item briefly (in-memory text, not from DB)
+      const el = document.getElementById('txn-list');
+      const placeholder = document.createElement('div');
+      placeholder.id = `txn-live-${data.id}`;
+      placeholder.className = 'txn-item txn-item-live';
+      placeholder.innerHTML = renderTxnInner({
+        from_jid: 'live',
+        from_name: null,
+        language: null,
+        duration_s: null,
+        input_tokens: 0,
+        output_tokens: 0,
+        content_deleted: 0,
+        transcript: data.transcript,
+        summary: data.summary,
+        created_at: new Date().toISOString().replace('Z',''),
+      });
+      el.insertBefore(placeholder, el.firstChild);
+      // Remove the empty state if present
+      const empty = el.querySelector('.txn-empty');
+      if (empty) empty.remove();
+    }
+
+    function renderTranscriptions(rows) {
+      const el = document.getElementById('txn-list');
+      document.getElementById('txn-count').textContent = rows.length;
+
+      // Total duration badge
+      const totalSec = rows.reduce((acc, t) => acc + (t.duration_s || 0), 0);
+      const durBadge = document.getElementById('txn-duration');
+      if (totalSec > 0) {
+        durBadge.textContent = formatDuration(totalSec);
+        durBadge.style.display = '';
+      }
+
+      if (!rows.length) {
+        el.innerHTML = '<div class="txn-empty">No transcriptions yet. Connect WhatsApp and receive a voice message.</div>';
+        return;
+      }
+
+      el.innerHTML = rows.map(t => `<div class="txn-item">${renderTxnInner(t)}</div>`).join('');
+    }
+
+    function renderTxnInner(t) {
+      // Rows older than 90 days carry an "anon:" hash instead of the JID (ME-065 retention).
+      const jid = t.from_jid ?? '';
+      const anon = jid.startsWith('anon:');
+      const { flag, local } = jid && jid !== 'live' && !anon ? phoneInfo(jid) : { flag: '', local: '' };
+      const name = anon
+        ? 'Anonymised sender'
+        : t.from_name
+          ? `${t.from_name} ${flag} ${local}`.trim()
+          : `${flag} ${local}`.trim() || jid.split('@')[0] || 'Unknown sender';
+      const from = `From: ${name}`;
+
+      const time = timeAgo(t.created_at);
+      const dur = t.duration_s ? `<span class="badge">${formatDuration(Number(t.duration_s) || 0)}</span>` : '';
+      const lang = t.language && t.language !== 'unknown'
+        ? `<span class="badge badge-blue">${escHtml(LANG_NAMES[t.language] ?? t.language)}</span>` : '';
+
+      const inTok = Number(t.input_tokens) || 0;
+      const outTok = Number(t.output_tokens) || 0;
+      const totalTok = inTok + outTok;
+      const tokens = totalTok
+        ? `<span class="badge" title="${inTok} in / ${outTok} out tokens">${totalTok} Tokens (${inTok} in / ${outTok} out)</span>` : '';
+
+      const summary = t.summary
+        ? `<div class="txn-summary"><div class="txn-summary-label">💡 Summary</div>${escHtml(t.summary)}</div>` : '';
+
+      const body = t.content_deleted
+        ? `<span class="txn-content-deleted">Content deleted</span>`
+        : `${summary}<div class="txn-transcript">${escHtml(t.transcript ?? '')}</div>`;
+
+      return `
+        <div class="txn-header">
+          <div class="txn-from">${escHtml(from)}</div>
+          <span class="badge badge-green">Done</span>
+        </div>
+        <div class="txn-meta-row">
+          <span class="txn-time">${escHtml(time)}</span>
+          ${dur}${lang}${tokens}
+        </div>
+        <div class="txn-body">${body}</div>`;
+    }
+
+    function formatDuration(s) {
+      const m = Math.floor(s / 60);
+      const sec = Math.floor(s % 60);
+      return m > 0 ? `${m}:${String(sec).padStart(2,'0')}` : `${sec}s`;
+    }
+
+    function timeAgo(iso) {
+      const d = new Date(iso + 'Z');
+      const diff = (Date.now() - d.getTime()) / 1000;
+      if (diff < 60) return 'just now';
+      if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+      return d.toLocaleDateString();
+    }
+
+    function escHtml(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/\n/g,'<br>');
+    }
+
+    // ── Settings ──────────────────────────────────────────────────────────────
+    let pendingSettings = {};
+
+    async function loadSettings() {
+      buildLangSelect();
+      const res = await fetch('/api/settings');
+      const s = await res.json();
+      document.getElementById('s-1on1-recv').checked = !!s.transcribe_1on1_received;
+      document.getElementById('s-1on1-sent').checked = !!s.transcribe_1on1_sent;
+      document.getElementById('s-grp-recv').checked = !!s.transcribe_group_received;
+      document.getElementById('s-grp-sent').checked = !!s.transcribe_group_sent;
+      document.getElementById('s-translate').checked = !!s.translate_to_english;
+      document.getElementById('s-summary').checked = !!s.summary_enabled;
+      document.getElementById('s-min-words').value = s.summary_min_words ?? 120;
+      document.getElementById('s-custom-prompt').value = s.summary_custom_prompt ?? '';
+      const whisperCtx = s.whisper_context ?? '';
+      document.getElementById('s-whisper-context').value = whisperCtx;
+      document.getElementById('s-whisper-ctx-count').textContent = whisperCtx.length + ' / 200';
+      renderChips('exclude_contacts', s.exclude_contacts ?? []);
+      renderChips('exclude_groups', s.exclude_groups ?? []);
+
+      let targetLang = s.translate_target_language || 'en';
+
+      // Auto-detect from browser if user hasn't manually overridden
+      if (!s.translate_language_override) {
+        const browserLang = (navigator.language || 'en').split('-')[0].toLowerCase();
+        const supported = LANG_OPTIONS.map(([code]) => code);
+        const detected = supported.includes(browserLang) ? browserLang : 'en';
+        if (detected !== targetLang) {
+          targetLang = detected;
+          // Save auto-detected lang without marking as override
+          fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ translate_target_language: detected }),
+          });
+        }
+        document.getElementById('s-lang-auto-note').style.display = '';
+      } else {
+        document.getElementById('s-lang-auto-note').style.display = 'none';
+      }
+
+      document.getElementById('s-lang-select').value = targetLang;
+      setTranslateLabel(targetLang);
+    }
+
+    function onLangChange(val) {
+      setTranslateLabel(val);
+      document.getElementById('s-lang-auto-note').style.display = 'none';
+      saveSetting('translate_target_language', val);
+      saveSetting('translate_language_override', true);
+    }
+
+    function saveSetting(key, value) {
+      pendingSettings[key] = value;
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(flushSettings, 600);
+    }
+
+    async function flushSettings() {
+      if (!Object.keys(pendingSettings).length) return;
+      const payload = { ...pendingSettings };
+      pendingSettings = {};
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const msg = document.getElementById('settings-saved-msg');
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({}));
+        msg.textContent = '⚠️ Not saved' + (error ? `: ${error}` : '');
+        msg.style.color = '#fca5a5';
+        msg.style.display = 'inline';
+        return;
+      }
+      msg.textContent = 'Saved ✓';
+      msg.style.color = '';
+      msg.style.display = 'inline';
+      setTimeout(() => { msg.style.display = 'none'; }, 2000);
+    }
+
+    // ── Chip inputs (exclude_contacts / exclude_groups) ───────────────────────
+    function chipListId(k) { return k === 'exclude_contacts' ? 's-exclude-contacts-chips' : 's-exclude-groups-chips'; }
+    function chipInputId(k) { return k === 'exclude_contacts' ? 's-exclude-contacts-input' : 's-exclude-groups-input'; }
+
+    function getChipValues(k) {
+      return [...document.querySelectorAll(`#${chipListId(k)} .chip`)].map(el => el.dataset.value);
+    }
+
+    function renderChips(k, values) {
+      const list = document.getElementById(chipListId(k));
+      list.innerHTML = '';
+      values.forEach(v => { if (v) list.appendChild(makeChip(k, v)); });
+    }
+
+    function makeChip(k, value) {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.dataset.value = value;
+      const label = document.createElement('span');
+      label.textContent = value;
+      chip.appendChild(label);
+      const btn = document.createElement('button');
+      btn.className = 'chip-remove';
+      btn.type = 'button';
+      btn.setAttribute('aria-label', `Remove ${value}`);
+      btn.textContent = '×';
+      btn.onclick = () => { chip.remove(); saveSetting(k, getChipValues(k)); };
+      chip.appendChild(btn);
+      return chip;
+    }
+
+    function addChip(k, rawValue) {
+      const value = rawValue.trim();
+      if (!value) return;
+      if (getChipValues(k).includes(value)) return;
+      document.getElementById(chipListId(k)).appendChild(makeChip(k, value));
+      document.getElementById(chipInputId(k)).value = '';
+      saveSetting(k, getChipValues(k));
+    }
+
+    function chipKeydown(e, k) {
+      if (e.key === ',' || e.key === 'Enter') {
+        e.preventDefault();
+        addChip(k, e.target.value.replace(/,+$/, ''));
+      }
+    }
+
+    function chipBlur(e, k) {
+      if (e.target.value.trim()) addChip(k, e.target.value);
+    }
+
+    function chipPaste(e, k) {
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      text.split(',').forEach(v => addChip(k, v));
+    }
+
+    function toggleSettings() {
+      const body = document.getElementById('settings-body');
+      const chevron = document.getElementById('settings-chevron');
+      body.classList.toggle('open');
+      chevron.classList.toggle('open');
+    }
+
+    // ── Telegram ──────────────────────────────────────────────────────────────
+    let tgSectionOpen = true;
+
+    async function initTelegram() {
+      // Fetch token — returns 401 if not auth'd, or works if bot is configured
+      const [tokenRes, groupsRes] = await Promise.all([
+        fetch('/api/telegram/token'),
+        fetch('/api/telegram/groups'),
+      ]);
+      if (!tokenRes.ok) return; // bot not configured on server
+      const { token, botUsername } = await tokenRes.json();
+      document.getElementById('tg-link-command').textContent = `/link ${token}`;
+      document.querySelectorAll('.tg-bot-name').forEach(el => {
+        el.textContent = botUsername ? `@${botUsername}` : 'your Telegram bot';
+      });
+      document.getElementById('tg-section').style.display = '';
+      renderTgGroups(await groupsRes.json());
+
+      // Link codes are single-use (ME-065): after a /link in Telegram the code shown
+      // here is dead. Refresh it, and the group list, whenever the user comes back.
+      window.addEventListener('focus', refreshTelegram);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') refreshTelegram();
+      });
+
+      // Initialise Telegram-specific toggles from current settings
+      const settingsRes = await fetch('/api/settings');
+      if (settingsRes.ok) {
+        const s = await settingsRes.json();
+        document.getElementById('tg-sent').checked = s.telegram_transcribe_sent ?? true;
+        document.getElementById('tg-received').checked = s.telegram_transcribe_received ?? true;
+      }
+    }
+
+    async function refreshTelegram() {
+      try {
+        const [tokenRes, groupsRes] = await Promise.all([
+          fetch('/api/telegram/token'),
+          fetch('/api/telegram/groups'),
+        ]);
+        if (tokenRes.ok) {
+          const { token } = await tokenRes.json();
+          document.getElementById('tg-link-command').textContent = `/link ${token}`;
+        }
+        if (groupsRes.ok) renderTgGroups(await groupsRes.json());
+      } catch { /* offline — keep what is shown */ }
+    }
+
+    function toggleTgSection() {
+      tgSectionOpen = !tgSectionOpen;
+      document.getElementById('tg-body').style.display = tgSectionOpen ? '' : 'none';
+      document.getElementById('tg-chevron').textContent = tgSectionOpen ? '▲' : '▼';
+    }
+
+    // Group titles are chosen by whoever created the Telegram group: build the rows
+    // with textContent and a listener, never innerHTML or an inline onclick (ME-065).
+    function renderTgGroups(groups) {
+      const list = document.getElementById('tg-groups-list');
+      list.replaceChildren();
+      const heading = document.createElement('div');
+      if (!groups.length) {
+        heading.style.cssText = 'font-size:13px;color:var(--text-dim);margin-top:4px';
+        heading.textContent = 'No groups linked yet.';
+        list.appendChild(heading);
+        return;
+      }
+      heading.style.cssText = 'font-size:12px;color:var(--text-muted);margin-bottom:6px';
+      heading.textContent = 'Linked groups';
+      list.appendChild(heading);
+      for (const g of groups) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid var(--border)';
+        const title = document.createElement('span');
+        title.style.fontSize = '13px';
+        title.textContent = g.chat_title || 'Unnamed group';
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-ghost btn-sm';
+        btn.type = 'button';
+        btn.textContent = 'Remove';
+        btn.dataset.chatId = String(g.chat_id);
+        btn.addEventListener('click', () => removeTgGroup(btn.dataset.chatId));
+        row.append(title, btn);
+        list.appendChild(row);
+      }
+    }
+
+    async function saveTgSetting(key, value) {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: value }),
+      });
+    }
+
+    function copyTgCommand() {
+      const cmd = document.getElementById('tg-link-command').textContent;
+      const btn = document.querySelector('[onclick="copyTgCommand()"]');
+      const done = () => {
+        if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'copy'; }, 1500); }
+      };
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(cmd).then(done).catch(() => fallbackCopy(cmd, done));
+      } else {
+        fallbackCopy(cmd, done);
+      }
+    }
+    function fallbackCopy(text, cb) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      try { document.execCommand('copy'); cb(); } catch(e) {}
+      document.body.removeChild(ta);
+    }
+
+    async function removeTgGroup(chatId) {
+      await fetch('/api/telegram/groups/' + encodeURIComponent(chatId), { method: 'DELETE' });
+      const res = await fetch('/api/telegram/groups');
+      if (res.ok) renderTgGroups(await res.json());
+    }
+
+    // ── Start ─────────────────────────────────────────────────────────────────
+    init();
+    initTelegram();
+  </script>
+</body>
+</html>

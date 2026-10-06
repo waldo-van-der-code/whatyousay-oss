@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatYouSay — Log in</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">📱 WhatYouSay</div>
+      <div class="login-sub">Your WhatsApp voice message transcriber</div>
+
+      <div id="form-view">
+        <div id="error-msg" class="alert alert-error" style="display:none"></div>
+        <div class="form-group">
+          <label class="form-label" for="email">Email address</label>
+          <input class="form-input" type="email" id="email" name="email"
+            placeholder="you@example.com" autocomplete="email" required autofocus>
+        </div>
+        <button class="btn btn-primary" id="submit-btn" style="width:100%" onclick="submitLogin()">
+          Send magic link
+        </button>
+      </div>
+
+      <div id="success-view" class="login-success">
+        <div style="background:rgba(37,211,102,.1);border:1px solid rgba(37,211,102,.35);border-radius:8px;padding:14px 16px;margin-bottom:16px">
+          <p style="color:#25d366;font-weight:600;margin:0 0 4px">Email sent!</p>
+          <p style="color:#25d366;margin:0;font-size:13px">Please check your inbox (<span id="sent-to"></span>) and click the login link.</p>
+        </div>
+        <p style="color:var(--text-muted);font-size:13px;margin:0">Also check your <strong>spam or junk folder</strong> if you don't see it within a minute.</p>
+        <p style="margin-top:16px;font-size:12px;color:var(--text-dim)">
+          Still nothing? <a href="#" onclick="resetForm();return false">Try again</a> or open this page in a different browser.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Check for error param
+    const params = new URLSearchParams(location.search);
+    if (params.get('error') === 'invalid') {
+      document.getElementById('error-msg').textContent = 'This login link is invalid or has expired. Please request a new one.';
+      document.getElementById('error-msg').style.display = 'block';
+    }
+
+    async function submitLogin() {
+      const emailEl = document.getElementById('email');
+      const btn = document.getElementById('submit-btn');
+      const errEl = document.getElementById('error-msg');
+      const email = emailEl.value.trim();
+
+      if (!email) { emailEl.focus(); return; }
+
+      errEl.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+
+      try {
+        const res = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? 'Failed to send');
+
+        document.getElementById('sent-to').textContent = email;
+        document.getElementById('form-view').style.display = 'none';
+        document.getElementById('success-view').style.display = 'block';
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Send magic link';
+      }
+    }
+
+    function resetForm() {
+      document.getElementById('form-view').style.display = 'block';
+      document.getElementById('success-view').style.display = 'none';
+      document.getElementById('submit-btn').disabled = false;
+      document.getElementById('submit-btn').textContent = 'Send magic link';
+    }
+
+    document.getElementById('email').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitLogin();
+    });
+  </script>
+</body>
+</html>

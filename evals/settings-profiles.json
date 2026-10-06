@@ -1,0 +1,13 @@
+{
+  "_comment": "Pipeline-relevant settings profiles for the Whisper settings matrix. Replace the example profile with your own users' settings to test them. `no-context` is the comparison baseline and must stay.",
+  "profiles": {
+    "no-context": { "known_names": "", "whisper_context": "" },
+    "example-user": {
+      "known_names": "anna,bram,carla,dmitri,elif,fiona,mira",
+      "whisper_context": "anna,bram,carla,dmitri,elif,fiona,mira,bakery"
+    }
+  },
+  "hypothetical": {
+    "dashboard-placeholder": { "known_names": "", "whisper_context": "anna, bram, carla, fiona, acme" }
+  }
+}

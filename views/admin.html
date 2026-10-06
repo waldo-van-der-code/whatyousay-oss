@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatYouSay — Admin</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .admin-wrap { max-width: 900px; margin: 0 auto; padding: 32px 16px; }
+    .admin-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
+    .admin-title { font-size: 22px; font-weight: 700; color: var(--text); }
+    .stats-row { display: flex; gap: 16px; margin-bottom: 28px; }
+    .stat-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 24px; flex: 1; }
+    .stat-value { font-size: 28px; font-weight: 700; color: var(--text); }
+    .stat-label { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+    .users-table { width: 100%; border-collapse: collapse; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .users-table th { text-align: left; padding: 12px 16px; font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border); background: var(--bg); }
+    .users-table td { padding: 12px 16px; font-size: 14px; color: var(--text); border-bottom: 1px solid var(--border); }
+    .users-table tr:last-child td { border-bottom: none; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+    .badge-green { background: rgba(37,211,102,.15); color: #25d366; }
+    .badge-gray { background: var(--bg); color: var(--text-muted); }
+    .btn-delete { background: none; border: 1px solid #ef4444; color: #ef4444; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+    .btn-delete:hover { background: #ef4444; color: #fff; }
+    .back-link { color: var(--text-muted); font-size: 14px; text-decoration: none; }
+    .back-link:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+  <div class="admin-wrap">
+    <div class="admin-header">
+      <div class="admin-title">⚙️ Admin</div>
+      <a href="/" class="back-link">← Back to dashboard</a>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-users">—</div>
+        <div class="stat-label">Total users</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-wa">—</div>
+        <div class="stat-label">WhatsApp connected</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-tx">—</div>
+        <div class="stat-label">Total transcriptions</div>
+      </div>
+    </div>
+
+    <table class="users-table" id="users-table">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Joined</th>
+          <th>WhatsApp</th>
+          <th>Transcriptions</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="users-body">
+        <tr><td colspan="5" style="color:var(--text-muted);text-align:center;padding:32px">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    async function load() {
+      const res = await fetch('/api/admin/users');
+      if (!res.ok) { document.getElementById('users-body').innerHTML = '<tr><td colspan="5" style="color:#ef4444;text-align:center;padding:32px">Access denied</td></tr>'; return; }
+      const { users, total_transcriptions } = await res.json();
+
+      document.getElementById('stat-users').textContent = users.length;
+      document.getElementById('stat-wa').textContent = users.filter(u => u.wa_connected).length;
+      document.getElementById('stat-tx').textContent = total_transcriptions;
+
+      const tbody = document.getElementById('users-body');
+      if (!users.length) {
+        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-muted);text-align:center;padding:32px">No users yet</td></tr>';
+        return;
+      }
+      // Emails are user input and may legally contain ' and `: build rows with
+      // textContent and a listener, never an inline onclick (ME-065).
+      tbody.replaceChildren(...users.map(renderUserRow));
+    }
+
+    function renderUserRow(u) {
+      const tr = document.createElement('tr');
+      tr.id = `row-${Number(u.id)}`;
+      const cell = (text, style) => {
+        const td = document.createElement('td');
+        if (style) td.style.cssText = style;
+        td.textContent = text;
+        tr.appendChild(td);
+        return td;
+      };
+      cell(u.email);
+      cell(String(u.created_at ?? '').slice(0, 10), 'color:var(--text-muted)');
+      const waTd = cell('');
+      const badge = document.createElement('span');
+      badge.className = `badge ${u.wa_connected ? 'badge-green' : 'badge-gray'}`;
+      badge.textContent = u.wa_connected ? 'Connected' : 'Not connected';
+      waTd.appendChild(badge);
+      cell(String(u.transcription_count ?? 0));
+      const btnTd = cell('');
+      const btn = document.createElement('button');
+      btn.className = 'btn-delete';
+      btn.type = 'button';
+      btn.textContent = 'Delete';
+      btn.addEventListener('click', () => deleteUser(Number(u.id), u.email));
+      btnTd.appendChild(btn);
+      return tr;
+    }
+
+    async function deleteUser(id, email) {
+      if (!confirm(`Delete user ${email} and all their data?`)) return;
+      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        document.getElementById(`row-${id}`)?.remove();
+        load();
+      } else {
+        alert('Delete failed');
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>
