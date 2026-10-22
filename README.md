@@ -6,6 +6,8 @@ WhatYouSay is a small self-hosted Node.js server that links to a WhatsApp accoun
 
 The idea comes from [WhatScribe](https://www.whatscribe.ai), a hosted service that does the same thing. WhatYouSay is an independent implementation you run yourself, built around one rule: the server does not keep what people said.
 
+How it was built and tested, from the evals to Whisper cutting notes short: [Write the eval before the fix](https://waldo.vanderlore.de/blog/whatyousay-privacy-voice-pipeline/).
+
 > [!warning]
 > WhatYouSay connects through [Baileys](https://github.com/WhiskeySockets/Baileys), an unofficial WhatsApp Web client. Unofficial clients break WhatsApp's terms of service, and WhatsApp can restrict or ban numbers that use them. Anyone who runs this takes that risk with their own number. This project is not affiliated with WhatsApp, Meta or WhatScribe.
 
