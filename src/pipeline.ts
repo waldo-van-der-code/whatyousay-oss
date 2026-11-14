@@ -1,6 +1,7 @@
 import Groq from 'groq-sdk';
 import { Settings } from './auth';
 import { logger } from './logger';
+import { foreignParagraphIndexes, splitParagraphs } from './language-guard';
 import { dutchFidelityIssues, guardTranscriptCleanup } from './transcript-format';
 
 export class PipelineError extends Error {
@@ -279,6 +280,11 @@ export async function transcribe(audioBuffer: Buffer, filename = 'audio.ogg', kn
         file: file3,
         model: 'whisper-large-v3-turbo',
         response_format: 'verbose_json',
+        // WAY-48: force the detected language here too. Pass 2 and the low-confidence
+        // retry already do; this one did not, so a recovery pass was free to re-detect
+        // per segment and hand back a note that switches language halfway through —
+        // and its text is adopted whole whenever it carries 10% more words.
+        ...(topLang ? { language: topLang } : {}),
       }) as any;
       const turboText = stripHallucinations(turbo.text ?? '');
       if (countWords(turboText) >= countWords(bestText) * 1.1) {
@@ -342,7 +348,7 @@ NEVER change any of the following:
 
 PARAGRAPH BREAKS: Insert a blank line between each new topic, thought, or natural speaking pause. A 60-second voice message typically has 3–6 paragraphs. Never output the whole transcript as one block.
 
-If an entire paragraph (not isolated words or phrases) is clearly in a different language than ${langLabel}, translate it into ${langLabel}.
+NEVER TRANSLATE: return the words as spoken, including any stretch the speaker said in another language. Deciding the language of the reply is a separate step.
 
 German spelling note: write "erst mal" as two words, not "erstmal".${knownNamesLine}${nudge}
 
@@ -478,6 +484,79 @@ export async function translate(
     return { text, inputTokens, outputTokens };
   }
   return { text: out, inputTokens, outputTokens };
+}
+
+// ── Language unification ──────────────────────────────────────────────────────
+
+/**
+ * WAY-48: one message, one language.
+ *
+ * A reply goes out under one language — Whisper's detection, or the translation target —
+ * and the labels, the summary and the formatting all follow it. The body did not have to.
+ * Whisper drifts to English mid-note on longer audio, and when the cleanup model put a
+ * drifted paragraph back into the spoken language, the German/English edit-rate guard
+ * read that as a paraphrase and restored the recogniser's words. The reader got a German
+ * note with one English paragraph in the middle.
+ *
+ * So the check lives here instead, after everything that can change the text: any
+ * paragraph clearly not in the reply's language is translated into it, and nothing else
+ * is touched. Repairing a drifted paragraph means translating a translation, which is
+ * lossy — but a paragraph the reader cannot read is worse, and the detector only fires
+ * on whole paragraphs, never on the English words people genuinely mix into their speech.
+ */
+export type ParagraphTranslator =
+  (text: string, targetLang: string) => Promise<{ text: string; inputTokens: number; outputTokens: number }>;
+
+/**
+ * Past this share of off-target paragraphs the reply language itself is the thing that is
+ * wrong — most likely Whisper mis-detected a mixed note. Rewriting most of a message is a
+ * bigger error than leaving it as spoken, so the note goes out untouched.
+ */
+export const MAX_FOREIGN_PARAGRAPH_SHARE = 0.5;
+/** A note needing more repairs than this is in the same category: suspect, leave alone. */
+export const MAX_REPAIRED_PARAGRAPHS = 6;
+/** A repair that returns less than this share of the paragraph's words is refused. */
+const MIN_REPAIR_WORD_RATIO = 0.6;
+
+export async function unifyLanguage(
+  text: string,
+  displayLang: string,
+  translateParagraph: ParagraphTranslator = (paragraph, lang) => translate(paragraph, lang),
+): Promise<{ text: string; inputTokens: number; outputTokens: number; repairedParagraphs: number }> {
+  const foreign = foreignParagraphIndexes(text, displayLang);
+  if (foreign.length === 0) return { text, inputTokens: 0, outputTokens: 0, repairedParagraphs: 0 };
+
+  const paragraphs = splitParagraphs(text);
+  if (foreign.length > paragraphs.length * MAX_FOREIGN_PARAGRAPH_SHARE || foreign.length > MAX_REPAIRED_PARAGRAPHS) {
+    logger.warn({ event: 'pipeline.language.skipped', displayLang, foreign: foreign.length, paragraphs: paragraphs.length });
+    return { text, inputTokens: 0, outputTokens: 0, repairedParagraphs: 0 };
+  }
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let repairedParagraphs = 0;
+  const repaired = [...paragraphs];
+
+  for (const index of foreign) {
+    const source = paragraphs[index];
+    // Tokens are counted whether or not the result is used — the call was paid for.
+    const result = await translateParagraph(source, displayLang);
+    inputTokens += result.inputTokens;
+    outputTokens += result.outputTokens;
+    const candidate = result.text.trim();
+    const stillForeign = foreignParagraphIndexes(candidate, displayLang).length > 0
+      // A refused translate() hands back its own source, which is this same paragraph.
+      || candidate === source.trim();
+    if (!candidate || stillForeign || countWords(candidate) < countWords(source) * MIN_REPAIR_WORD_RATIO) {
+      logger.warn({ event: 'pipeline.language.repair_refused', index, srcWords: countWords(source), outWords: countWords(candidate) });
+      continue;
+    }
+    repaired[index] = candidate;
+    repairedParagraphs++;
+  }
+
+  if (repairedParagraphs === 0) return { text, inputTokens, outputTokens, repairedParagraphs: 0 };
+  return { text: repaired.join('\n\n'), inputTokens, outputTokens, repairedParagraphs };
 }
 
 // ── Summarization ─────────────────────────────────────────────────────────────
@@ -651,6 +730,23 @@ export async function runPipeline(audioBuffer: Buffer, settings: Settings): Prom
       degraded.push('translate');
       logStepFailure('translate', err);
     }
+  }
+
+  // WAY-48: last word on language, after cleanup and translation have both had theirs.
+  // It runs before the summary so a repaired transcript is what gets summarised.
+  try {
+    const unified = await unifyLanguage(transcript, displayLang);
+    totalInputTokens += unified.inputTokens;
+    totalOutputTokens += unified.outputTokens;
+    if (unified.repairedParagraphs > 0) {
+      logger.info({ event: 'pipeline.language_unified', displayLang, paragraphs: unified.repairedParagraphs });
+      transcript = unified.text;
+    }
+  } catch (err) {
+    // The transcript is already readable; a failed repair leaves the drift in rather
+    // than withholding the reply.
+    degraded.push('language');
+    logStepFailure('language', err);
   }
 
   let summary: string | undefined;

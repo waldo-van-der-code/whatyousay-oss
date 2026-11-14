@@ -14,7 +14,7 @@
     "test:eval:resilience": "npx tsx evals/pipeline-resilience.ts",
     "test:eval:readonly": "playwright test --grep @readonly",
     "test:eval:pipeline": "npx tsx evals/pipeline-evals.ts",
-    "check": "tsc --noEmit && tsx evals/env-example.ts && tsx evals/wa-retry.ts && tsx evals/pipeline-resilience.ts && tsx evals/security.ts && tsx evals/shutdown.ts && tsx evals/privacy-alerts.ts",
+    "check": "tsc --noEmit && tsx evals/env-example.ts && tsx evals/wa-retry.ts && tsx evals/pipeline-resilience.ts && tsx evals/security.ts && tsx evals/shutdown.ts && tsx evals/privacy-alerts.ts && tsx evals/transcript-format.ts && tsx evals/language-guard.ts",
     "test:eval:security": "npx tsx evals/security.ts"
   },
   "dependencies": {

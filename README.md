@@ -16,6 +16,7 @@ The idea comes from [WhatScribe](https://www.whatscribe.ai), a hosted service th
 - Transcribes voice notes with Groq Whisper large-v3, using a two-pass strategy that guards against truncation and language flips.
 - Cleans the text (punctuation, paragraphs, obvious mishearings) with language-specific rules for English, German and Dutch, and falls back to the raw Whisper text when the cleanup changes too much.
 - Optionally translates into a target language and adds a short summary to long notes.
+- Keeps one reply in one language: a paragraph that comes back in a different language than the rest of the note is translated into the reply's language, while foreign words and phrases the speaker genuinely mixed in are left exactly as spoken.
 - Lets each user choose which voice notes are transcribed (sent or received, one-to-one chats or groups) and exclude specific contacts or groups.
 - Shows transcripts live in a web dashboard while it is open. Login is by magic link.
 - Optional: a Telegram bot that transcribes voice messages in linked Telegram groups, and Telegram alerts for operators.
@@ -215,6 +216,7 @@ One long-running Node.js and Express process with SQLite (`node:sqlite`). The Wh
 | `src/whatsapp.ts` | Baileys connection, message handling, retry receipts |
 | `src/pipeline.ts` | Whisper passes, cleanup, translation, summary, reply formatting |
 | `src/transcript-format.ts` | Cleanup guards and language-specific fidelity checks |
+| `src/language-guard.ts` | Per-paragraph language detection behind the one-language-per-reply rule |
 | `src/routes.ts`, `src/auth.ts` | Web routes, magic-link login, sessions, settings |
 | `src/retention.ts` | Daily sender pseudonymisation |
 | `src/crypto.ts` | At-rest encryption of WhatsApp credentials |
